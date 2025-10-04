@@ -19,17 +19,18 @@
     "debug",
     "trace",
     "blockchain",
+    "ai",
     "cli"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/tx-debugger-cli.git"
+    "url": "https://github.com/VGabriel45/tx_debugger_cli"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/tx-debugger-cli/issues"
+    "url": "https://github.com/VGabriel45/tx_debugger_cli/issues"
   },
-  "homepage": "https://github.com/yourusername/tx-debugger-cli#readme",
+  "homepage": "https://github.com/VGabriel45/tx_debugger_cli#readme",
   "files": [
     "dist/",
     "README.md",

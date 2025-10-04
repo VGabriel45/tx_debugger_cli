@@ -2,6 +2,8 @@
 
 A powerful CLI tool to debug EVM transactions, decode traces, and get AI-powered summaries. Supports 50+ blockchain networks including Ethereum, Polygon, Arbitrum, Optimism, BSC, Avalanche, and more.
 
+Very powerful for Account Abstraction transactions that can hide internal reverts while the transaction might look like it succeeded.
+
 ## Features
 
 - 🔍 **Transaction Debugging**: Find and analyze transaction reverts with detailed error messages

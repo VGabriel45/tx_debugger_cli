@@ -17,25 +17,10 @@ A powerful CLI tool to debug EVM transactions, decode traces, and get AI-powered
 
 ```bash
 npm install -g tx-debugger-cli
-```
-
-### Local Installation
-
-```bash
-npm install tx-debugger-cli
-npx tx_debugger --help
-```
-
-### Using pnpm
-
-```bash
+# or
 pnpm add -g tx-debugger-cli
-```
-
-### Using yarn
-
-```bash
-yarn global add tx-debugger-cli
+# or
+yarn add -g tx-debugger-cli
 ```
 
 ## Quick Start

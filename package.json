@@ -1,0 +1,55 @@
+{
+  "name": "tx-debugger-cli",
+  "version": "1.4.0",
+  "description": "A powerful CLI tool to debug EVM transactions, decode traces, and get AI-powered summaries",
+  "main": "dist/index.js",
+  "bin": {
+    "tx_debugger": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "start": "node dist/index.js",
+    "postbuild": "chmod +x dist/index.js",
+    "prepublishOnly": "npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ethereum",
+    "evm",
+    "transaction",
+    "debug",
+    "trace",
+    "blockchain",
+    "cli"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/tx-debugger-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/tx-debugger-cli/issues"
+  },
+  "homepage": "https://github.com/yourusername/tx-debugger-cli#readme",
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "pnpm@10.12.1",
+  "dependencies": {
+    "@google/genai": "^1.21.0",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.1",
+    "dotenv": "^17.2.2",
+    "ethers": "^6.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}

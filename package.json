@@ -1,6 +1,6 @@
 {
   "name": "tx-debugger-cli",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "A powerful CLI tool to debug EVM transactions, decode traces, and get AI-powered summaries",
   "main": "dist/index.js",
   "bin": {
@@ -24,12 +24,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/VGabriel45/tx-debugger-cli_cli"
+    "url": "https://github.com/VGabriel45/tx_debugger_cli"
   },
   "bugs": {
-    "url": "https://github.com/VGabriel45/tx-debugger-cli_cli/issues"
+    "url": "https://github.com/VGabriel45/tx_debugger_cli/issues"
   },
-  "homepage": "https://github.com/VGabriel45/tx-debugger-cli_cli#readme",
+  "homepage": "https://github.com/VGabriel45/tx_debugger_cli/blob/main/README.md",
   "files": [
     "dist/",
     "README.md",

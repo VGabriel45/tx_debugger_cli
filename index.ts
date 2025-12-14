@@ -4,6 +4,9 @@ import { Command } from 'commander';
 import { ethers, formatEther, Provider } from 'ethers';
 import chalk from 'chalk';
 import { GoogleGenAI } from '@google/genai';
+import { readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { UNISWAP_V3_ERROR_CODES } from './constants';
 
 const CONTRACT_INFO_CACHE = new Map<string, { name: string }>();
 
@@ -323,6 +326,28 @@ const getRevertReason = (output?: string): string => {
     }
 };
 
+const decodeUniswapError = (errorMessage: string): string | null => {
+    // Check if the error message is a known Uniswap V3 error code
+    const trimmedError = errorMessage.trim().replace(/^["']|["']$/g, '');
+    const errorInfo = UNISWAP_V3_ERROR_CODES[trimmedError];
+    
+    if (errorInfo) {
+        return `${errorInfo.description} (${errorInfo.source})`;
+    }
+    
+    return null;
+};
+
+const formatRevertReason = (reason: string): string => {
+    const uniswapExplanation = decodeUniswapError(reason);
+    
+    if (uniswapExplanation) {
+        return `${reason} - ${chalk.yellow(uniswapExplanation)}`;
+    }
+    
+    return reason;
+};
+
 const transformTrace = async (call: RawTraceCall, provider: Provider, chainId: number, etherscanApiKey?: string): Promise<SimplifiedTraceCall> => {
     const [fromContractName, toContractName, decodedFunctionSelector] = await Promise.all([
         getContractName(call.from, provider, chainId, etherscanApiKey),
@@ -414,11 +439,88 @@ const findDeepestRevertedCall = (calls: SimplifiedTraceCall[]): SimplifiedTraceC
     return deepestReverted;
 };
 
+const generateTraceDiagram = (trace: DecodedTraceCall): string => {
+    const sequence: Array<{ from: string; to: string; function: string; status: string; revertReason?: string }> = [];
+    
+    // Collect all calls in sequence order
+    const collectCalls = (call: DecodedTraceCall) => {
+        const functionName = call.decodedFunctionSelector?.functionName !== 'Unknown' 
+            ? call.decodedFunctionSelector.functionName 
+            : call.functionSelector !== '0x' 
+                ? `0x${call.functionSelector.slice(2, 10)}` 
+                : 'TRANSFER';
+        
+        sequence.push({
+            from: call.fromContractName,
+            to: call.toContractName,
+            function: functionName,
+            status: call.reverted ? '❌' : '✅',
+            revertReason: call.reverted ? call.revertReason : undefined
+        });
+        
+        // Process nested calls
+        if (call.calls && call.calls.length > 0) {
+            call.calls.forEach(nestedCall => collectCalls(nestedCall));
+        }
+    };
+    
+    collectCalls(trace);
+    
+    // Get all unique participants (contracts)
+    const participants = new Set<string>();
+    sequence.forEach(call => {
+        participants.add(call.from);
+        participants.add(call.to);
+    });
+    const participantList = Array.from(participants);
+    
+    // Build Mermaid sequence diagram
+    const lines: string[] = [];
+    lines.push('```mermaid');
+    lines.push('sequenceDiagram');
+    
+    // Add participants
+    participantList.forEach((participant, index) => {
+        // Clean participant names for Mermaid (remove special chars, limit length)
+        const cleanName = participant.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 30);
+        lines.push(`    participant ${cleanName} as ${participant}`);
+    });
+    lines.push('');
+    
+    // Add sequence of calls
+    sequence.forEach((call) => {
+        const fromClean = call.from.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 30);
+        const toClean = call.to.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 30);
+        
+        // Build the label with function name and status
+        let label = `${call.function}`;
+        if (call.revertReason) {
+            // Truncate revert reason if too long
+            const shortReason = call.revertReason.length > 50 
+                ? call.revertReason.substring(0, 47) + '...' 
+                : call.revertReason;
+            label += ` (REVERT: ${shortReason})`;
+        }
+        
+        // Use different arrow styles based on status
+        if (call.status === '❌') {
+            lines.push(`    ${fromClean} -x ${toClean}: ${label}`);
+        } else {
+            lines.push(`    ${fromClean} ->> ${toClean}: ${label}`);
+        }
+    });
+    
+    lines.push('```');
+    
+    return lines.join('\n');
+};
+
 const generateSummary = (txHash: string, deepestReverted: SimplifiedTraceCall | null): string => {
     if (!deepestReverted) return chalk.green(`✅ Transaction ${txHash} completed successfully.`);
     const signature = deepestReverted.decodedFunctionSelector?.functionSignature || `Unknown Function (${deepestReverted.functionSelector})`;
     const reason = deepestReverted.revertReason || 'Unknown reason';
-    return chalk.red(`❌ Function ${chalk.cyan(signature)} reverted with reason: "${reason}"`);
+    const formattedReason = formatRevertReason(reason);
+    return chalk.red(`❌ Function ${chalk.cyan(signature)} reverted with reason: "${formattedReason}"`);
 };
 
 const displayDecodedTrace = (trace: DecodedTraceCall, depth = 0, chainId: number = 1, enableLinks: boolean = true): void => {
@@ -443,7 +545,8 @@ const displayDecodedTrace = (trace: DecodedTraceCall, depth = 0, chainId: number
     console.log(`${indent}  Gas Used: ${chalk.blue(trace.gasUsed)}`);
 
     if (trace.reverted && trace.revertReason) {
-        console.log(`${indent}  ${chalk.bold.red('Revert Reason:')} ${chalk.red(trace.revertReason)}`);
+        const formattedReason = formatRevertReason(trace.revertReason);
+        console.log(`${indent}  ${chalk.bold.red('Revert Reason:')} ${chalk.red(formattedReason)}`);
     }
 
     if (trace.calls.length > 0) {
@@ -521,7 +624,7 @@ const validateInputs = (options: { txHash: string; rpcUrl: string; chainId: stri
     if (etherscanApiKey !== undefined && !etherscanApiKey) { console.error(chalk.red('Error: Etherscan API key is required for contract name lookup. Use --etherscanApiKey or -e')); process.exit(1); }
 };
 
-const validateSimulationInputs = (options: { to: string; data: string; value: string; from: string; rpcUrl: string; chainId: string; blockNumber?: string; etherscanApiKey?: string }): void => {
+const validateSimulationInputs = (options: { to: string; data: string; value: string; from: string; rpcUrl: string; chainId: string; blockNumber?: string; etherscanApiKey?: string }): { to: string; data: string; value: string; from: string; rpcUrl: string; chainId: string; blockNumber?: string; etherscanApiKey?: string } => {
     const { to, data, value, from, rpcUrl, chainId, blockNumber, etherscanApiKey } = options;
     if (!to) { console.error(chalk.red('Error: To address is required. Use --to')); process.exit(1); }
     if (!data) { console.error(chalk.red('Error: Transaction data is required. Use --data')); process.exit(1); }
@@ -531,12 +634,28 @@ const validateSimulationInputs = (options: { to: string; data: string; value: st
     if (!/^0x[a-fA-F0-9]{40}$/.test(to)) { console.error(chalk.red('Error: Invalid to address format.')); process.exit(1); }
     if (!/^0x[a-fA-F0-9]{40}$/.test(from)) { console.error(chalk.red('Error: Invalid from address format.')); process.exit(1); }
     if (!/^0x[a-fA-F0-9]*$/.test(data)) { console.error(chalk.red('Error: Invalid data format. Must be hex string starting with 0x.')); process.exit(1); }
-    if (!/^0x[a-fA-F0-9]*$/.test(value)) { console.error(chalk.red('Error: Invalid value format. Must be hex string starting with 0x.')); process.exit(1); }
+    
+    // Normalize value: accept plain numbers and convert to hex
+    let normalizedValue = value;
+    if (!value.startsWith('0x')) {
+        // Try to parse as a number and convert to hex
+        const numValue = value === '' ? 0 : parseInt(value, 10);
+        if (isNaN(numValue) || numValue < 0) {
+            console.error(chalk.red('Error: Invalid value format. Must be a non-negative number or hex string starting with 0x.')); 
+            process.exit(1);
+        }
+        normalizedValue = '0x' + numValue.toString(16);
+    } else if (!/^0x[a-fA-F0-9]*$/.test(value)) {
+        console.error(chalk.red('Error: Invalid value format. Must be hex string starting with 0x.')); 
+        process.exit(1);
+    }
     try { new URL(rpcUrl); } catch (e) { console.error(chalk.red('Error: Invalid RPC URL format.')); process.exit(1); }
     const chainIdNum = parseInt(chainId, 10);
     if (isNaN(chainIdNum) || chainIdNum <= 0) { console.error(chalk.red('Error: Chain ID must be a positive integer.')); process.exit(1); }
     if (blockNumber && !/^(0x[a-fA-F0-9]+|latest|earliest|pending)$/.test(blockNumber)) { console.error(chalk.red('Error: Invalid block number format. Use hex number, latest, earliest, or pending.')); process.exit(1); }
     if (etherscanApiKey !== undefined && !etherscanApiKey) { console.error(chalk.red('Error: Etherscan API key is required for contract name lookup. Use --etherscanApiKey or -e')); process.exit(1); }
+    
+    return { to, data, value: normalizedValue, from, rpcUrl, chainId, blockNumber, etherscanApiKey };
 };
 
 const debugTransaction = async (txHash: string, rpcUrl: string, chainId: string, enableLinks: boolean = true, etherscanApiKey?: string): Promise<void> => {
@@ -571,16 +690,31 @@ const debugTransaction = async (txHash: string, rpcUrl: string, chainId: string,
                         console.log(`    - ${p.name} (${p.type}): ${chalk.magenta(p.value)}`);
                     });
                 }
-                console.log(`  ${chalk.bold.red('Revert Reason:')} ${chalk.red(deepest.revertReason)}`);
+                const formattedReason = formatRevertReason(deepest.revertReason || 'Unknown reason');
+                console.log(`  ${chalk.bold.red('Revert Reason:')} ${chalk.red(formattedReason)}`);
             }
         }
-    } catch (error) {
+    } catch (error: any) {
+        // Check for historical state error
+        if (error?.error?.message?.includes('historical state is not available') || 
+            error?.message?.includes('historical state is not available')) {
+            console.error(chalk.red('\n❌ Error: Historical state is not available'));
+            console.error(chalk.yellow('\nThis error occurs when:'));
+            console.error(chalk.yellow('  • The RPC node is not an archive node (only keeps recent state)'));
+            console.error(chalk.yellow('  • The transaction is too old for the RPC to trace'));
+            console.error(chalk.yellow('  • The RPC provider doesn\'t support tracing for this block'));
+            console.error(chalk.cyan('\n💡 Solutions:'));
+            console.error(chalk.cyan('  1. Use an archive RPC node (e.g., Alchemy Archive, Infura Archive)'));
+            console.error(chalk.cyan('  2. Try a different RPC provider that supports historical tracing'));
+            console.error(chalk.cyan('  3. Check if the transaction is recent enough for your RPC provider'));
+            process.exit(1);
+        }
         console.error(chalk.red('\nAn unexpected error occurred:'), error);
         process.exit(1);
     }
 };
 
-const getDecodedTrace = async (txHash: string, rpcUrl: string, chainId: string, jsonOutput: boolean, enableLinks: boolean = true, etherscanApiKey?: string): Promise<void> => {
+const getDecodedTrace = async (txHash: string, rpcUrl: string, chainId: string, jsonOutput: boolean, enableLinks: boolean = true, etherscanApiKey?: string, saveDiagram: boolean = false): Promise<void> => {
     const chainIdNumber = parseInt(chainId, 10);
     const formattedTxHash = enableLinks ? formatTxHashWithLink(txHash, chainIdNumber, enableLinks) : txHash;
     console.log(chalk.blue(`🔍 Getting decoded trace for transaction ${chalk.bold(formattedTxHash)} on chain ${chalk.bold(chainId)}...`));
@@ -594,13 +728,44 @@ const getDecodedTrace = async (txHash: string, rpcUrl: string, chainId: string, 
             process.exit(1);
         }
         const decodedTrace = await transformDecodedTrace(rawTrace, provider, chainIdNumber, etherscanApiKey);
+        
         if (jsonOutput) {
-            console.log(JSON.stringify({ result: { trace: decodedTrace } }, null, 2));
+            const jsonContent = JSON.stringify({ 
+                result: { 
+                    trace: decodedTrace
+                } 
+            }, null, 2);
+            const filename = `${txHash}.json`;
+            writeFileSync(filename, jsonContent, 'utf-8');
+            console.log(chalk.green(`\n✅ JSON trace saved to: ${chalk.bold(filename)}`));
         } else {
             console.log(`\n${chalk.bold('--- Decoded Transaction Trace ---')}`);
             displayDecodedTrace(decodedTrace, 0, chainIdNumber, enableLinks);
         }
-    } catch (error) {
+        
+        // Generate and save diagram to separate file if requested
+        if (saveDiagram) {
+            const diagram = generateTraceDiagram(decodedTrace);
+            const diagramFilename = `${txHash}_diagram.md`;
+            writeFileSync(diagramFilename, diagram, 'utf-8');
+            console.log(chalk.green(`\n✅ Mermaid diagram saved to: ${chalk.bold(diagramFilename)}`));
+            console.log(chalk.cyan(`💡 Tip: Open the file or paste it into https://mermaid.live to visualize it!`));
+        }
+    } catch (error: any) {
+        // Check for historical state error
+        if (error?.error?.message?.includes('historical state is not available') || 
+            error?.message?.includes('historical state is not available')) {
+            console.error(chalk.red('\n❌ Error: Historical state is not available'));
+            console.error(chalk.yellow('\nThis error occurs when:'));
+            console.error(chalk.yellow('  • The RPC node is not an archive node (only keeps recent state)'));
+            console.error(chalk.yellow('  • The transaction is too old for the RPC to trace'));
+            console.error(chalk.yellow('  • The RPC provider doesn\'t support tracing for this block'));
+            console.error(chalk.cyan('\n💡 Solutions:'));
+            console.error(chalk.cyan('  1. Use an archive RPC node (e.g., Alchemy Archive, Infura Archive)'));
+            console.error(chalk.cyan('  2. Try a different RPC provider that supports historical tracing'));
+            console.error(chalk.cyan('  3. Check if the transaction is recent enough for your RPC provider'));
+            process.exit(1);
+        }
         console.error(chalk.red('\nAn unexpected error occurred:'), error);
         process.exit(1);
     }
@@ -624,7 +789,21 @@ const getAITxSummary = async (txHash: string, rpcUrl: string, chainId: string, g
         const summary = await getAISummary(decodedTrace, geminiApiKey);
         console.log(`\n${chalk.bold('--- AI Transaction Summary ---')}`);
         console.log(chalk.white(summary));
-    } catch (error) {
+    } catch (error: any) {
+        // Check for historical state error
+        if (error?.error?.message?.includes('historical state is not available') || 
+            error?.message?.includes('historical state is not available')) {
+            console.error(chalk.red('\n❌ Error: Historical state is not available'));
+            console.error(chalk.yellow('\nThis error occurs when:'));
+            console.error(chalk.yellow('  • The RPC node is not an archive node (only keeps recent state)'));
+            console.error(chalk.yellow('  • The transaction is too old for the RPC to trace'));
+            console.error(chalk.yellow('  • The RPC provider doesn\'t support tracing for this block'));
+            console.error(chalk.cyan('\n💡 Solutions:'));
+            console.error(chalk.cyan('  1. Use an archive RPC node (e.g., Alchemy Archive, Infura Archive)'));
+            console.error(chalk.cyan('  2. Try a different RPC provider that supports historical tracing'));
+            console.error(chalk.cyan('  3. Check if the transaction is recent enough for your RPC provider'));
+            process.exit(1);
+        }
         console.error(chalk.red('\nAn unexpected error occurred:'), error);
         process.exit(1);
     }
@@ -683,18 +862,46 @@ const simulateTransaction = async (to: string, data: string, value: string, from
             console.log(chalk.red(`   ❌ Trace failed: ${error}`));
             console.log(chalk.yellow(`   ℹ️  This might be because the RPC doesn't support debug_traceCall`));
         }
-    } catch (error) {
+    } catch (error: any) {
+        // Check for historical state error
+        if (error?.error?.message?.includes('historical state is not available') || 
+            error?.message?.includes('historical state is not available')) {
+            console.error(chalk.red('\n❌ Error: Historical state is not available'));
+            console.error(chalk.yellow('\nThis error occurs when:'));
+            console.error(chalk.yellow('  • The RPC node is not an archive node (only keeps recent state)'));
+            console.error(chalk.yellow('  • The block number is too old for the RPC to trace'));
+            console.error(chalk.yellow('  • The RPC provider doesn\'t support tracing for this block'));
+            console.error(chalk.cyan('\n💡 Solutions:'));
+            console.error(chalk.cyan('  1. Use an archive RPC node (e.g., Alchemy Archive, Infura Archive)'));
+            console.error(chalk.cyan('  2. Try a different RPC provider that supports historical tracing'));
+            console.error(chalk.cyan('  3. Use a more recent block number (or "latest")'));
+            process.exit(1);
+        }
         console.error(chalk.red('\nAn unexpected error occurred during simulation:'), error);
         process.exit(1);
     }
 };
 
 async function main() {
+    // Read version from package.json
+    // When compiled, __dirname points to dist/, so we need to go up one level
+    let version = '0.0.1';
+    try {
+        const packageJsonPath = typeof __dirname !== 'undefined' 
+            ? join(__dirname, '..', 'package.json')
+            : join(process.cwd(), 'package.json');
+        const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+        version = packageJson.version || version;
+    } catch (error) {
+        // Fallback to default version if package.json can't be read
+        console.warn(chalk.yellow('Warning: Could not read version from package.json, using default'));
+    }
+
     const program = new Command();
     program
-        .name('tx_debugger')
+        .name('tx-debugger-cli')
         .description('A CLI tool to debug EVM transactions.')
-        .version('0.0.1');
+        .version(version);
 
     program
         .command('look_for_revert')
@@ -717,10 +924,11 @@ async function main() {
         .option('-c, --chainId <id>', 'Chain ID for the transaction (e.g., 1 for Ethereum, 137 for Polygon)')
         .option('-e, --etherscanApiKey <key>', 'Your Etherscan API key for contract name lookup')
         .option('-j, --json', 'Output as JSON format')
+        .option('-d, --diagram', 'Save Mermaid sequence diagram to a separate file (txHash_diagram.md)')
         .option('--no-links', 'Disable clickable links in output')
         .action(async (options) => {
             validateInputs(options);
-            await getDecodedTrace(options.txHash, options.rpcUrl, options.chainId, options.json, !options.noLinks, options.etherscanApiKey);
+            await getDecodedTrace(options.txHash, options.rpcUrl, options.chainId, options.json, !options.noLinks, options.etherscanApiKey, options.diagram);
         });
 
     program
@@ -750,8 +958,8 @@ async function main() {
         .option('-b, --blockNumber <block>', 'Block number to simulate against (default: latest)')
         .option('--no-links', 'Disable clickable links in output')
         .action(async (options) => {
-            validateSimulationInputs(options);
-            await simulateTransaction(options.to, options.data, options.value, options.from, options.rpcUrl, options.chainId, options.blockNumber, !options.noLinks, options.etherscanApiKey);
+            const normalizedOptions = validateSimulationInputs(options);
+            await simulateTransaction(normalizedOptions.to, normalizedOptions.data, normalizedOptions.value, normalizedOptions.from, normalizedOptions.rpcUrl, normalizedOptions.chainId, normalizedOptions.blockNumber, !options.noLinks, normalizedOptions.etherscanApiKey);
         });
 
 

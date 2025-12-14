@@ -1,15 +1,14 @@
 {
   "name": "tx-debugger-cli",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "A powerful CLI tool to debug EVM transactions, decode traces, and get AI-powered summaries",
   "main": "dist/index.js",
   "bin": {
-    "tx_debugger": "./dist/index.js"
+    "tx-debugger-cli": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc && chmod +x dist/index.js",
     "start": "node dist/index.js",
-    "publish": "npm run build && npm publish",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -25,12 +24,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/VGabriel45/tx_debugger_cli"
+    "url": "https://github.com/VGabriel45/tx-debugger-cli_cli"
   },
   "bugs": {
-    "url": "https://github.com/VGabriel45/tx_debugger_cli/issues"
+    "url": "https://github.com/VGabriel45/tx-debugger-cli_cli/issues"
   },
-  "homepage": "https://github.com/VGabriel45/tx_debugger_cli#readme",
+  "homepage": "https://github.com/VGabriel45/tx-debugger-cli_cli#readme",
   "files": [
     "dist/",
     "README.md",
